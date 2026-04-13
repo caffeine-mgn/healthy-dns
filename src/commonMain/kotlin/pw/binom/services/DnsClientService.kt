@@ -1,117 +1,86 @@
 package pw.binom.services
 
+import io.ktor.network.selector.*
+import io.ktor.network.sockets.*
 import kotlinx.coroutines.*
-import pw.binom.concurrency.SpinLock
-import pw.binom.concurrency.synchronize
-import pw.binom.dns.*
-import pw.binom.io.ByteBuffer
-import pw.binom.io.socket.InetSocketAddress
-import pw.binom.io.socket.UdpNetSocket
-import pw.binom.io.use
-import pw.binom.logger.Logger
-import pw.binom.logger.info
-import pw.binom.network.NetworkManager
-import pw.binom.network.UdpConnection
-import pw.binom.network.tcpConnect
-import pw.binom.strong.BeanLifeCycle
-import pw.binom.strong.inject
+import kotlinx.io.Buffer
+import kotlinx.io.readByteArray
+import pw.binom.DnsHandle
+import pw.binom.dns.protocol.*
+import pw.binom.utils.synchronize
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.resume
 import kotlin.random.Random
 
-@OptIn(DelicateCoroutinesApi::class)
-class DnsClientService {
-    private val networkManager by inject<NetworkManager>()
+@OptIn(DelicateCoroutinesApi::class, ExperimentalAtomicApi::class)
+class DnsClientService(
+    private val selector: SelectorManager
+) : AutoCloseable {
+    private val waters = HashMap<Short, CancellableContinuation<DnsPackage>>()
+    private val lock = AtomicBoolean(false)
 
-    private val waters = HashMap<Short, CancellableContinuation<DnsRecord>>()
-    private val lock = SpinLock()
-
-    private var job: Job? = null
-    private var client: UdpConnection? = null
-    private val logger by Logger.ofThisOrGlobal
-
-    init {
-        BeanLifeCycle.postConstruct {
-            val client = networkManager.attach(UdpNetSocket())
-            this.client = client
-            job = GlobalScope.launch(networkManager) {
-                ByteBuffer(1500).use { buffer ->
-                    client.use { client ->
-                        while (isActive) {
-                            try {
-                                buffer.clear()
-                                val len = client.read(buffer, null)
-                                if (len.isNotAvailable) {
-                                    continue
-                                }
-                                buffer.flip()
-                                val record = DnsRecord.read(buffer)
-                                val water = lock.synchronize {
-                                    waters.remove(record.header.id)
-                                }
-                                water?.resume(record)
-                            } catch (e: CancellationException) {
-                                break
-                            } catch (e: Throwable) {
-                                e.printStackTrace()
-                            }
-                        }
-                    }
+    private var client: BoundDatagramSocket? = null
+    private val job2 = CoroutineScope(Dispatchers.IO).launch {
+        aSocket(selector).udp().bind().use { client ->
+            this@DnsClientService.client = client
+            try {
+                val bytes = client.receive().packet.readByteArray()
+                val record = DnsPackage.read(bytes)
+                val water = lock.synchronize {
+                    waters.remove(record.header.id)
                 }
-            }
-        }
-
-        BeanLifeCycle.preDestroy {
-            runCatching { job?.cancelAndJoin() }
-        }
-    }
-
-    suspend fun sendRequestTcp(request: DnsRecord, server: InetSocketAddress): DnsRecord =
-        ByteBuffer(1500).use { buf ->
-            networkManager.tcpConnect(server).use { client ->
-                request.write(client, buf)
-                DnsRecord.read(client, buf)
-            }
-        }
-
-    suspend fun sendRequest(request: DnsRecord, server: InetSocketAddress): DnsRecord {
-        ByteBuffer(1500).use { buf ->
-            val client = client
-            if (client != null) {
-                request.write(buf)
-                buf.flip()
-                client.write(buf, server)
-                return suspendCancellableCoroutine { continuation ->
-                    lock.synchronize {
-                        waters[request.header.id] = continuation
-                    }
-                }
-            } else {
-                logger.info("Client not defined")
-                throw IllegalStateException("Client not defined")
+                water?.resume(record)
+            } finally {
+                this@DnsClientService.client = null
             }
         }
     }
 
-    suspend fun sendRequest(name: String, server: InetSocketAddress): DnsRecord {
+
+    override fun close() {
+        job2.cancel()
+        lock.synchronize {
+            waters.clear()
+        }
+    }
+
+    suspend fun sendRequest(request: DnsPackage, server: InetSocketAddress): DnsPackage {
+        check(!job2.isCancelled) { "DnsClient is closed" }
+        val client = client
+        checkNotNull(client) { "Client not ready" }
+        val buffer = Buffer()
+        request.write(buffer)
+        client.send(Datagram(buffer, server))
+        return suspendCancellableCoroutine { continuation ->
+            lock.synchronize {
+                waters[request.header.id] = continuation
+            }
+        }
+    }
+
+    suspend fun sendRequest(name: String, server: InetSocketAddress): DnsPackage {
         val id = Random.nextInt().toShort()
-        val record = DnsRecord(
-            header = Header(
+
+        val record = DnsPackage(
+            header = DnsHeader(
                 id = id,
-                rd = true,
-                tc = false,
-                aa = false,
-                opcode = Opcode.QUERY,
                 qr = false,
+                opcode = Opcode.QUERY,
+                aa = false,
+                tc = false,
+                rd = true,
                 ra = false,
-                z = false,
-                ad = true,
-                cd = false,
-                rcode = Rcode.NOERROR
+                z = 0,
+                rcode = RCode.NOERROR
+//                ad = true,
+//                cd = false,
+
             ),
-            queries = listOf(Query(name = name, type = QType.A, clazz = QClass.IN)),
-            ans = emptyList(),
-            auth = emptyList(),
-            add = listOf()
+            queries = listOf(Question(name = name, type = DnsType.A, clazz = DnsClass.IN)),
+            answer = emptyList(),
+            authority = emptyList(),
+            additional = listOf()
         )
         return sendRequest(request = record, server = server)
     }

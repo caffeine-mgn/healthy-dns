@@ -1,59 +1,81 @@
 package pw.binom.services
 
+import io.ktor.network.sockets.*
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.flatMapConcat
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import pw.binom.DomainTree
-import pw.binom.dns.QType
-import pw.binom.io.socket.InetAddress
-import pw.binom.io.socket.InetSocketAddress
-import pw.binom.io.socket.ProtocolFamily
+import pw.binom.dns.protocol.DnsPackage
+import pw.binom.dns.protocol.DnsType
+import pw.binom.dns.protocol.RData
+import pw.binom.dns.protocol.records.ipv4
+import pw.binom.dns.protocol.records.ipv6
 import pw.binom.properties.DomainsProperty
-import pw.binom.strong.BeanLifeCycle
-import pw.binom.strong.inject
-import pw.binom.strong.properties.injectProperty
+import pw.binom.utils.HostName
+import pw.binom.utils.request
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
-class DomainsServices {
-    private val domainsProperty by injectProperty<DomainsProperty>()
-    private val ipService by inject<IpService>()
-    private val dnsClientService by inject<DnsClientService>()
+class DomainsServices(
+    val ipService: IpService,
+    val dnsClientService: DnsUdpClient,
+    val domainsProperty: DomainsProperty,
+) {
 
     class DnsRecord(
-        val content: ByteArray,
-        val type: QType,
+        val content: RData,
+        val type: DnsType,
         val ttl: Duration,
     )
 
-    fun findRecords(name: String): List<DnsRecord> {
+    suspend fun findRecords(name: String): List<DnsRecord> {
         val controller = domains.get(name.split("."))?.value ?: return emptyList()
+        val request = DnsPackage.request(hostname = name, listOf(DnsType.A))
         val downStreamList = controller.downStream
-            .asSequence()
-            .map {
-                runBlocking {
-                    dnsClientService.sendRequest(name, it)
-                        .ans
+            .asFlow()
+            .flatMapConcat {
+                    dnsClientService.lookup(request, it)
+                        .answer
                         .map {
                             DnsRecord(content = it.rdata, type = it.type, ttl = it.ttl.toInt().seconds)
                         }
-                }
-            }.flatten()
+                        .asFlow()
+            }
         return controller.ips
             .mapNotNull { ip ->
                 if (ipService[ip]?.healthy != false) {
+                    val host = HostName(ip)
+
+                    val type: DnsType
+                    val data: RData
+                    when {
+                        host.isIpv4 -> {
+                            type = DnsType.A
+                            data = RData.ipv4(ip)
+                        }
+
+                        host.isIpv6 -> {
+                            type = DnsType.AAAA
+                            data = RData.ipv6(ip)
+                        }
+                        else -> {
+                            type = DnsType.CNAME
+                            data = RData.cname(ip)
+                        }
+                    }
+
                     DnsRecord(
-                        content = ip.address,
-                        type = when (ip.protocolFamily) {
-                            ProtocolFamily.AF_INET -> QType.A
-                            ProtocolFamily.AF_INET6 -> QType.AAAA
-                            else -> TODO("Protocol ${ip.protocolFamily} not supported")
-                        },
+                        content = data,
+                        type = type,
                         ttl = controller.ttl,
                     )
                 } else {
                     null
                 }
             }
-            .toList() + downStreamList
+            .toList() + downStreamList.toList()
     }
 
     private fun createChecker(healthCheck: DomainsProperty.HealthCheck) =
@@ -77,30 +99,27 @@ class DomainsServices {
 
     private class DomainController(
         val downStream: List<InetSocketAddress>,
-        val ips: List<InetAddress>,
+        val ips: List<String>,
         val ttl: Duration,
     )
 
     private val domains = DomainTree<DomainController>()
 
     init {
-        BeanLifeCycle.postConstruct {
-            domainsProperty.ips
-                .asSequence()
-                .filter { it.healthCheck != null }
-                .forEach {
-                    ipService.addIp(it.ip, createChecker(it.healthCheck!!))
-                }
-
-            domainsProperty.records.forEach { record ->
-                val ips = record.ips
-                    .map { InetAddress.resolve(it) }
-                domains.getOrPut(record.domain).value = DomainController(
-                    ips = ips,
-                    ttl = record.ttl,
-                    downStream = record.downStream?.ips ?: emptyList()
-                )
+        domainsProperty.ips
+            .asSequence()
+            .filter { it.healthCheck != null }
+            .forEach {
+                ipService.addIp(HostName(it.ip), createChecker(it.healthCheck!!))
             }
+
+        domainsProperty.records.forEach { record ->
+            val ips = record.ips
+            domains.getOrPut(record.domain).value = DomainController(
+                ips = ips,
+                ttl = record.ttl,
+                downStream = record.downStream?.ips ?: emptyList()
+            )
         }
     }
 }

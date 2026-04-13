@@ -1,6 +1,10 @@
 package pw.binom.services
-
+/*
+import com.diamondedge.logging.logging
+import io.ktor.network.selector.*
+import io.ktor.network.sockets.*
 import kotlinx.coroutines.*
+import kotlinx.io.readByteArray
 import kotlinx.serialization.json.internal.decodeToSequenceByReader
 import pw.binom.dns.DnsRecord
 import pw.binom.io.ByteBuffer
@@ -15,12 +19,12 @@ import pw.binom.network.NetworkManager
 import pw.binom.network.bindUdp
 import pw.binom.strong.BeanLifeCycle
 import pw.binom.strong.inject
+import pw.binom.dns.protocol.DnsPackage
 
 @OptIn(ExperimentalStdlibApi::class)
-class ForwardingUDPService {
-    private val networkManager by inject<NetworkManager>()
+class ForwardingUDPService(val selector: SelectorManager) {
 
-    private val logger by Logger.ofThisOrGlobal
+    private val logger = logging()
 
     init {
         bgJob {
@@ -51,18 +55,6 @@ class ForwardingUDPService {
                             val r = buffer.holdState {
                                 DnsRecord.read(it)
                             }
-//                            val validBytes = buffer.holdState {
-//                                it.toByteArray()
-//                            }
-//                            val invalidBytes = ByteBuffer(1500).use { buffer ->
-//                                r.write(buffer)
-//                                buffer.flip()
-//                                buffer.toByteArray()
-//                            }
-
-//                            logger.info("record: $r")
-//                            logger.info("  VALID: ${validBytes.toHexString()}")
-//                            logger.info("INVALID: ${invalidBytes.toHexString()}")
                             buffer.clear()
                             r.write(buffer)
                             buffer.flip()
@@ -89,3 +81,4 @@ fun bgJob(func: suspend CoroutineScope.() -> Unit) {
         runCatching { job?.cancel() }
     }
 }
+ */

@@ -1,18 +1,14 @@
 package pw.binom.properties
 
+import io.ktor.http.*
+import io.ktor.network.sockets.*
 import kotlinx.serialization.Serializable
-import pw.binom.io.socket.InetAddress
-import pw.binom.io.socket.InetSocketAddress
-import pw.binom.properties.serialization.annotations.PropertiesPrefix
-import pw.binom.serialization.InetAddressSerializer
+import pw.binom.serialization.HttpMethodSerializer
 import pw.binom.serialization.InetSocketAddressSerializer
-import pw.binom.serialization.URLSerializer
-import pw.binom.url.URL
-import pw.binom.validate.annotations.OneOf
+import pw.binom.utils.HostName
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
-@PropertiesPrefix("domains")
 @Serializable
 data class DomainsProperty(
     val records: List<Record> = emptyList(),
@@ -29,8 +25,7 @@ data class DomainsProperty(
 
     @Serializable
     data class IP(
-        @Serializable(InetAddressSerializer::class)
-        val ip: InetAddress,
+        val ip: String,
         val healthCheck: HealthCheck? = null,
     )
 
@@ -41,14 +36,20 @@ data class DomainsProperty(
         val domain: String,
         val ttl: Duration = 30.seconds,
         val policy: Policy = Policy.ALL_HEALTHY,
-    )
+    ){
+        init {
+//            ips.forEach {
+//                val h = HostName(it)
+//                require(h.isIpv4 || h.isIpv6) { "Only ipv4 or ipv6 addresses are allowed: $it" }
+//            }
+        }
+    }
 
     @Serializable
     data class Downstream(
         val ips: List<@Serializable(InetSocketAddressSerializer::class) InetSocketAddress>,
     )
 
-    @OneOf("http", "tcp")
     @Serializable
     data class HealthCheck(
         val http: Http? = null,
@@ -56,9 +57,9 @@ data class DomainsProperty(
     ) {
         @Serializable
         data class Http(
-            val method: String = "GET",
-            @Serializable(URLSerializer::class)
-            val url: URL,
+            @Serializable(HttpMethodSerializer::class)
+            val method: HttpMethod = HttpMethod.Get,
+            val url: Url,
             val responseCode: Int = 200,
             val interval: Duration = 10.seconds,
             val timeout: Duration = 30.seconds,

@@ -1,12 +1,11 @@
 plugins {
-    kotlin("plugin.serialization") version "2.1.0"
-    kotlin("multiplatform") version "2.1.0"
-    application
+    alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.kotlinx.serialization)
 }
 
-val nativeEntryPoint = "pw.binom.main"
 
 kotlin {
+    val nativeEntryPoint = "pw.binom.main"
     linuxArm64 {
         binaries {
             executable {
@@ -31,29 +30,26 @@ kotlin {
             }
         }
     }
+
     jvm {
-        withJava()
         mainRun {
             mainClass = "pw.binom.MainKt"
         }
     }
     sourceSets {
         commonMain.dependencies {
-            api("pw.binom.io:network:1.0.0-SNAPSHOT")
-            api("com.charleskorn.kaml:kaml:0.66.0")
-            api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
-            api("pw.binom.io:httpClient:1.0.0-SNAPSHOT")
-            api("pw.binom.io:strong:1.0.0-SNAPSHOT")
-            api("pw.binom.io:signal:1.0.0-SNAPSHOT")
-            api("pw.binom.io:file:1.0.0-SNAPSHOT")
-            api("pw.binom.io:dns:1.0.0-SNAPSHOT")
-            api("pw.binom.io:strong-properties-yaml:1.0.0-SNAPSHOT")
-            api("pw.binom.io:strong-properties-ini:1.0.0-SNAPSHOT")
+            api(libs.kotlinx.coroutines.core)
+            api("pw.binom.dns:protocol:1.0.0-SNAPSHOT")
+            api(libs.ktor.network)
+            api(libs.ktor.client.cio)
+            api(libs.ktor.server.cio)
+            api(libs.serialization.yaml)
+            api(libs.serialization.json)
         }
         commonTest.dependencies {
             api(kotlin("test-common"))
             api(kotlin("test-annotations-common"))
-            api("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
+            api(libs.kotlinx.coroutines.test)
         }
         jvmTest.dependencies {
             api(kotlin("test-junit"))
@@ -61,7 +57,10 @@ kotlin {
     }
 }
 repositories {
+//    maven {
+//        this.url = uri("https://central.sonatype.com/repository/maven-snapshots/")
+//    }
     mavenLocal()
-    maven(url = "https://repo.binom.pw")
+//    maven(url = "https://repo.binom.pw")
     mavenCentral()
 }

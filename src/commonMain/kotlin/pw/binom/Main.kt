@@ -1,67 +1,83 @@
 package pw.binom
 
+import com.charleskorn.kaml.Yaml
+import io.ktor.client.*
+import io.ktor.network.selector.*
+import io.ktor.network.sockets.*
+import io.ktor.utils.io.readText
 import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import pw.binom.config.MainConfig
-import pw.binom.io.file.readText
-import pw.binom.io.file.takeIfFile
-import pw.binom.io.file.workDirectoryFile
-import pw.binom.io.use
-import pw.binom.network.MultiFixedSizeThreadNetworkDispatcher
-import pw.binom.properties.ini.addIni
-import pw.binom.signal.Signal
-import pw.binom.strong.Strong
-import pw.binom.strong.properties.BaseStrongProperties
-import pw.binom.strong.properties.StrongProperties
-import pw.binom.strong.properties.yaml.addYaml
+import kotlinx.coroutines.delay
+import kotlinx.io.buffered
+import kotlinx.io.files.FileSystem
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
+import pw.binom.dns.protocol.DnsPackage
+import pw.binom.dns.protocol.DnsType
+import pw.binom.properties.DnsServerProperty
+import pw.binom.properties.DomainsProperty
+import pw.binom.properties.GlobalConfig
+import pw.binom.services.DnsTcpServer
+import pw.binom.services.DnsUdpClient
+import pw.binom.services.DnsUdpServer
+import pw.binom.services.DomainsServices
+import pw.binom.services.IpService
+import pw.binom.services.LookupService
+import pw.binom.utils.request
+import kotlin.time.Duration.Companion.seconds
 
 @OptIn(DelicateCoroutinesApi::class)
-fun main(args: Array<String>) {
-//    InternalLog.replace {
-//        object : InternalLog {
-//            override val enabled: Boolean
-//                get() = true
-//
-//            override fun log(level: InternalLog.Level, file: String?, line: Int?, method: String?, text: () -> String) {
-//                println("$level $file $line: ${text()}")
-//            }
-//
-//            override fun <T> tx(func: (InternalLog.Transaction) -> T): T =
-//                func(InternalLog.Transaction.NULL)
-//        }
-//    }
-    runBlocking {
-        val properties = BaseStrongProperties()
-        properties.addArgs(args)
-        properties.addEnvironment()
-        Environment.workDirectoryFile.relative("config.yaml")
-            .takeIfFile()
-            ?.readText()
-            ?.let {
-                properties.addYaml(it)
-            }
+suspend fun main(args: Array<String>) {
+    val configFile = Path("config.yaml")
+    if (!SystemFileSystem.exists(configFile)) {
+        println("Config file missing")
+        return
+    }
+    val config = SystemFileSystem.source(configFile).buffered().use {
+        Yaml.default.decodeFromString(GlobalConfig.serializer(), it.readText())
+    }
+//    val config = DnsServerProperty(
+//        bind = InetSocketAddress(port = 5333, hostname = "0.0.0.0"),
+//        packageSize = 1500,
+//    )
+//    val domains = DomainsProperty(
+//        records = listOf(
+//            DomainsProperty.Record(
+//                ips = listOf("192.168.0.1"),
+//                domain = "test.local",
+//            ),
+//            DomainsProperty.Record(
+//                ips = listOf("test.local"),
+//                domain = "www.test.local",
+//            )
+//        )
+//    )
+    val selectorManager = SelectorManager()
+    val httpClient = HttpClient()
+    val ip = IpService(
+        httpClient = httpClient,
+        networkManager = selectorManager,
+    )
+    val dnsClient = DnsUdpClient(selectorManager)
+    val domainsServices = DomainsServices(
+        ipService = ip,
+        dnsClientService = dnsClient,
+        domainsProperty = config.domains,
 
-        Environment.workDirectoryFile.relative("config.ini")
-            .takeIfFile()
-            ?.readText()
-            ?.let {
-                properties.addIni(it)
-            }
+        )
+    val lookupService = LookupService(domainsServices = domainsServices)
 
-        MultiFixedSizeThreadNetworkDispatcher(Environment.availableProcessors).use { nm ->
-            val strong = Strong.create(MainConfig(nm = nm, strongProperties = properties))
-            Signal.handler {
-                println("Signal got! $it")
-                if (it.isInterrupted) {
-                    GlobalScope.launch {
-                        strong.destroy()
-                    }
-                }
-            }
-            strong.awaitDestroy()
-        }
+    val udpServer = DnsUdpServer(
+        selectorManager = selectorManager,
+        bind = config.server.bind,
+    ) {
+        lookupService.lookup(it)
     }
 
+    val tcpserver = DnsTcpServer(
+        bind = config.server.bind,
+        selectorManager = selectorManager,
+        lookupService = lookupService
+    )
+    tcpserver.join()
+    udpServer.join()
 }

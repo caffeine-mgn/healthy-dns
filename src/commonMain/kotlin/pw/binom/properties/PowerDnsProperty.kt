@@ -1,15 +1,15 @@
 package pw.binom.properties
 
+import io.ktor.http.*
 import kotlinx.serialization.Serializable
-import pw.binom.serialization.URLSerializer
-import pw.binom.url.URL
-import pw.binom.validate.annotations.NotEmpty
 
 @Serializable
 data class PowerDnsProperty(
-    @Serializable(URLSerializer::class)
-    @NotEmpty
-    val url: URL,
-    @NotEmpty
+    val url: Url,
     val token: String,
-)
+) {
+    init {
+        require(url.protocol.name == "http" || url.protocol.name == "https") { "Only http and https protocols are supported: $url" }
+        require(token.isNotBlank()) { "Invalid token" }
+    }
+}
