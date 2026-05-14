@@ -18,9 +18,9 @@ kotlin {
             executable {
                 entryPoint = nativeEntryPoint
             }
-            compilerOptions {
-                freeCompilerArgs.addAll("-Xallocator=std")
-            }
+//            compilerOptions {
+//                freeCompilerArgs.addAll("-Xallocator=std")
+//            }
         }
     }
     mingwX64 {

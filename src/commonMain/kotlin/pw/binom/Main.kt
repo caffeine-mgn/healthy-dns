@@ -7,6 +7,7 @@ import io.ktor.network.sockets.*
 import io.ktor.utils.io.readText
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import kotlinx.io.buffered
 import kotlinx.io.files.FileSystem
 import kotlinx.io.files.Path
@@ -26,15 +27,16 @@ import pw.binom.utils.request
 import kotlin.time.Duration.Companion.seconds
 
 @OptIn(DelicateCoroutinesApi::class)
-suspend fun main(args: Array<String>) {
-    val configFile = Path("config.yaml")
-    if (!SystemFileSystem.exists(configFile)) {
-        println("Config file missing")
-        return
-    }
-    val config = SystemFileSystem.source(configFile).buffered().use {
-        Yaml.default.decodeFromString(GlobalConfig.serializer(), it.readText())
-    }
+fun main(args: Array<String>) {
+    runBlocking {
+        val configFile = Path("config.yaml")
+        if (!SystemFileSystem.exists(configFile)) {
+            println("Config file missing")
+            return@runBlocking
+        }
+        val config = SystemFileSystem.source(configFile).buffered().use {
+            Yaml.default.decodeFromString(GlobalConfig.serializer(), it.readText())
+        }
 //    val config = DnsServerProperty(
 //        bind = InetSocketAddress(port = 5333, hostname = "0.0.0.0"),
 //        packageSize = 1500,
@@ -51,33 +53,34 @@ suspend fun main(args: Array<String>) {
 //            )
 //        )
 //    )
-    val selectorManager = SelectorManager()
-    val httpClient = HttpClient()
-    val ip = IpService(
-        httpClient = httpClient,
-        networkManager = selectorManager,
-    )
-    val dnsClient = DnsUdpClient(selectorManager)
-    val domainsServices = DomainsServices(
-        ipService = ip,
-        dnsClientService = dnsClient,
-        domainsProperty = config.domains,
-
+        val selectorManager = SelectorManager()
+        val httpClient = HttpClient()
+        val ip = IpService(
+            httpClient = httpClient,
+            networkManager = selectorManager,
         )
-    val lookupService = LookupService(domainsServices = domainsServices)
+        val dnsClient = DnsUdpClient(selectorManager)
+        val domainsServices = DomainsServices(
+            ipService = ip,
+            dnsClientService = dnsClient,
+            domainsProperty = config.domains,
 
-    val udpServer = DnsUdpServer(
-        selectorManager = selectorManager,
-        bind = config.server.bind,
-    ) {
-        lookupService.lookup(it)
+            )
+        val lookupService = LookupService(domainsServices = domainsServices)
+
+        val udpServer = DnsUdpServer(
+            selectorManager = selectorManager,
+            bind = config.server.bind,
+        ) {
+            lookupService.lookup(it)
+        }
+
+        val tcpserver = DnsTcpServer(
+            bind = config.server.bind,
+            selectorManager = selectorManager,
+            lookupService = lookupService
+        )
+        tcpserver.join()
+        udpServer.join()
     }
-
-    val tcpserver = DnsTcpServer(
-        bind = config.server.bind,
-        selectorManager = selectorManager,
-        lookupService = lookupService
-    )
-    tcpserver.join()
-    udpServer.join()
 }
