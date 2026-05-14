@@ -39,7 +39,6 @@ class DnsUdpServer(
                 try {
                     val l = server.receive()
                     val income = DnsPackage.read(l.packet.readByteArray())
-                    println("Income package: $income")
                     val outcome = handler.lookup(income)
                     val b = Buffer()
                     outcome.write(b)

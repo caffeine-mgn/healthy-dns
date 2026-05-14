@@ -1,17 +1,17 @@
 package pw.binom.services
 
 import io.ktor.network.sockets.*
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.flatMapConcat
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.runBlocking
 import pw.binom.DomainTree
 import pw.binom.dns.protocol.DnsPackage
 import pw.binom.dns.protocol.DnsType
 import pw.binom.dns.protocol.RData
 import pw.binom.dns.protocol.records.ipv4
 import pw.binom.dns.protocol.records.ipv6
+import pw.binom.dns.protocol.utils.normalizedRdata
 import pw.binom.properties.DomainsProperty
 import pw.binom.utils.HostName
 import pw.binom.utils.request
@@ -30,18 +30,24 @@ class DomainsServices(
         val ttl: Duration,
     )
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     suspend fun findRecords(name: String): List<DnsRecord> {
         val controller = domains.get(name.split("."))?.value ?: return emptyList()
         val request = DnsPackage.request(hostname = name, listOf(DnsType.A))
         val downStreamList = controller.downStream
             .asFlow()
             .flatMapConcat {
-                    dnsClientService.lookup(request, it)
-                        .answer
-                        .map {
-                            DnsRecord(content = it.rdata, type = it.type, ttl = it.ttl.toInt().seconds)
-                        }
-                        .asFlow()
+                dnsClientService.lookup(request, it)
+                    .answer
+                    .map { resource ->
+                        DnsRecord(
+                            content = resource.normalizedRdata()
+                                ?: throw IllegalStateException("Unknown type ${resource.type}"),
+                            type = resource.type,
+                            ttl = resource.ttl.toInt().seconds,
+                        )
+                    }
+                    .asFlow()
             }
         return controller.ips
             .mapNotNull { ip ->
@@ -60,6 +66,7 @@ class DomainsServices(
                             type = DnsType.AAAA
                             data = RData.ipv6(ip)
                         }
+
                         else -> {
                             type = DnsType.CNAME
                             data = RData.cname(ip)
