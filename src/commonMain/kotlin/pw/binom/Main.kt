@@ -71,14 +71,17 @@ fun main(args: Array<String>) {
         val udpServer = DnsUdpServer(
             selectorManager = selectorManager,
             bind = config.server.bind,
-        ) {
-            lookupService.lookup(it)
-        }
+            handler = { pack ->
+                lookupService.lookup(pack)
+            }
+        )
 
         val tcpserver = DnsTcpServer(
             bind = config.server.bind,
             selectorManager = selectorManager,
-            lookupService = lookupService
+            handler = { pack ->
+                lookupService.lookup(pack)
+            }
         )
         tcpserver.join()
         udpServer.join()

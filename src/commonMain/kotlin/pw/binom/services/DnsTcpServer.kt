@@ -8,13 +8,15 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.io.Buffer
 import kotlinx.io.EOFException
 import kotlinx.io.IOException
+import pw.binom.DnsHandle
 import pw.binom.dns.protocol.*
 
 @OptIn(ExperimentalStdlibApi::class, DelicateCoroutinesApi::class)
 class DnsTcpServer(
     selectorManager: SelectorManager?,
     private val bind: SocketAddress,
-    private val lookupService: LookupService,
+//    private val lookupService: LookupService,
+    private val handler: DnsHandle,
 ) : AutoCloseable {
 
     private val selectorManager: SelectorManager
@@ -37,23 +39,23 @@ class DnsTcpServer(
                     val newClient = server.accept()
                     GlobalScope.launch(Dispatchers.IO) {
                         newClient.use { client ->
-                            val read = newClient.openReadChannel()
-                            val write = newClient.openWriteChannel()
+                            val read = client.openReadChannel()
+                            val write = client.openWriteChannel()
                             while (isActive) {
                                 try {
                                     val size = read.readShort().toUShort().toInt()
                                     val income = DnsPackage.read(read.readByteArray(size))
-                                    val outcome = lookupService.lookup(income)
+                                    val outcome = handler.lookup(income)
                                     val b = Buffer()
                                     outcome.write(b)
                                     write.writeShort(b.size.toInt().toUShort().toShort())
                                     write.writePacket(b)
                                     write.flush()
-                                } catch (e: EOFException) {
+                                } catch (_: EOFException) {
                                     break
-                                } catch (e: CancellationException) {
+                                } catch (_: CancellationException) {
                                     break
-                                } catch (e: IOException) {
+                                } catch (_: IOException) {
                                     break
                                 } catch (e: Throwable) {
                                     e.printStackTrace()

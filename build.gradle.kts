@@ -45,6 +45,7 @@ kotlin {
             api(libs.ktor.server.cio)
             api(libs.serialization.yaml)
             api(libs.serialization.json)
+            api("io.github.oshai:kotlin-logging:7.0.3")
         }
         commonTest.dependencies {
             api(kotlin("test-common"))
