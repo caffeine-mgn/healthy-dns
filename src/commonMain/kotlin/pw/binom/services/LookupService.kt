@@ -49,6 +49,7 @@ class LookupService(
             .filter { it.clazz == DnsClass.IN }
             .filter { it.type == DnsType.A }
             .flatMapConcat { query ->
+                logger.info { "Query ${query.name}" }
                 domainsServices.findRecords(query.name)
                     .asFlow()
                     .map {
