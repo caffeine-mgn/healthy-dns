@@ -18,6 +18,7 @@ import pw.binom.dns.protocol.RCode
 import pw.binom.dns.protocol.RData
 import pw.binom.dns.protocol.Resource
 import pw.binom.dns.protocol.utils.normalizedRdata
+import pw.binom.utils.makeRefused
 
 class LookupService(
     private val domainsServices: DomainsServices,
@@ -184,24 +185,6 @@ class LookupService(
             additional = emptyList()
         )
     }
-
-    private fun DnsPackage.makeRefused() = DnsPackage(
-        header = DnsHeader(
-            id = header.id,
-            rd = true,
-            tc = false,
-            aa = true,
-            opcode = header.opcode,
-            qr = true,
-            ra = false,
-            z = 0,
-            rcode = RCode.REFUSED,
-        ),
-        queries = emptyList(),
-        answer = emptyList(),
-        authority = emptyList(),
-        additional = emptyList()
-    )
 
     @OptIn(ExperimentalCoroutinesApi::class)
     suspend fun lookup(record: DnsPackage): DnsPackage {

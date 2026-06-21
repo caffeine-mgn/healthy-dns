@@ -12,53 +12,68 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Buffer
 import kotlinx.io.readByteArray
 import pw.binom.DnsHandle
 import pw.binom.dns.protocol.DnsPackage
+import pw.binom.utils.makeRefused
+import kotlin.time.Duration
 import kotlin.use
 
 class DnsUdpServer(
     selectorManager: SelectorManager?,
     private val bind: SocketAddress,
     private val handler: DnsHandle,
+    private val timeout: Duration = Duration.INFINITE
 ) : AutoCloseable {
-    private val selectorManager: SelectorManager
+    private val manager: SelectorManager
     private val closeManager: Boolean
 
     private val logger = KotlinLogging.logger { }
 
     init {
         if (selectorManager != null) {
-            this.selectorManager = selectorManager
+            this.manager = selectorManager
             closeManager = false
         } else {
-            this.selectorManager = SelectorManager()
+            this.manager = SelectorManager()
             closeManager = true
         }
     }
 
-    private val job = this.selectorManager.launch(start = CoroutineStart.LAZY) {
+    private val job = this.manager.launch(start = CoroutineStart.LAZY) {
         try {
-            aSocket(this@DnsUdpServer.selectorManager).udp().bind(bind).use { server ->
+            aSocket(manager).udp().bind(bind).use { server ->
                 while (currentCoroutineContext().isActive) {
                     try {
                         val l = server.receive()
                         logger.info { "Receive request from ${l.address.port()}: ${l.packet.remaining} bytes" }
-                        val income = DnsPackage.read(l.packet.readByteArray())
-                        val outcome = handler.lookup(income)
-                        val b = Buffer()
-                        outcome.write(b)
-                        logger.info { "Send response to ${l.address}: ${b.size} bytes" }
-                        server.send(
-                            Datagram(
-                                packet = b,
-                                address = l.address
+                        manager.launch {
+                            val income = DnsPackage.read(l.packet.readByteArray())
+                            if (timeout == Duration.INFINITE) {
+                                handler.lookup(income)
+                            } else {
+                                withTimeoutOrNull(timeout) {
+                                    handler.lookup(income)
+                                } ?: income.makeRefused()
+                            }
+                            val outcome = handler.lookup(income)
+                            val b = Buffer()
+                            outcome.write(b)
+                            logger.info { "Send response to ${l.address}: ${b.size} bytes" }
+                            server.send(
+                                Datagram(
+                                    packet = b,
+                                    address = l.address
+                                )
                             )
-                        )
+                        }
                     } catch (e: CancellationException) {
+                        logger.warn(e) { "Dns UDP server JOB cancelled" }
                         break
                     } catch (e: Throwable) {
+                        logger.error(e) { "Error on processing request" }
                         e.printStackTrace()
                         break
                     }
@@ -80,7 +95,7 @@ class DnsUdpServer(
     init {
         if (closeManager) {
             job.invokeOnCompletion {
-                this.selectorManager.close()
+                this.manager.close()
             }
         }
         job.start()

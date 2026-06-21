@@ -29,3 +29,21 @@ fun DnsPackage.Companion.request(hostname: String, types: List<DnsType> = listOf
         authority = emptyList(),
         additional = listOf()
     )
+
+fun DnsPackage.makeRefused() = DnsPackage(
+    header = DnsHeader(
+        id = header.id,
+        rd = true,
+        tc = false,
+        aa = true,
+        opcode = header.opcode,
+        qr = true,
+        ra = false,
+        z = 0,
+        rcode = RCode.REFUSED,
+    ),
+    queries = emptyList(),
+    answer = emptyList(),
+    authority = emptyList(),
+    additional = emptyList()
+)

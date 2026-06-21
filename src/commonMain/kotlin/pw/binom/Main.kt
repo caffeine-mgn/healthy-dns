@@ -68,20 +68,22 @@ fun main(args: Array<String>) {
             )
         val lookupService = LookupService(domainsServices = domainsServices)
 
+        val dnsHandle = DnsHandle { pack ->
+            lookupService.lookup(pack)
+        }
+            .withTimeout(5.seconds)
+            .withRetry(3)
+
         val udpServer = DnsUdpServer(
             selectorManager = selectorManager,
             bind = config.server.bind,
-            handler = { pack ->
-                lookupService.lookup(pack)
-            }
+            handler = dnsHandle,
         )
 
         val tcpserver = DnsTcpServer(
             bind = config.server.bind,
             selectorManager = selectorManager,
-            handler = { pack ->
-                lookupService.lookup(pack)
-            }
+            handler = dnsHandle,
         )
         tcpserver.join()
         udpServer.join()
