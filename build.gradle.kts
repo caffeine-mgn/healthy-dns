@@ -39,7 +39,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             api(libs.kotlinx.coroutines.core)
-            api("pw.binom.dns:core:1.0.0-SNAPSHOT")
+            api(libs.binom.dns)
             api(libs.ktor.network)
             api(libs.ktor.client.cio)
             api(libs.ktor.server.cio)
