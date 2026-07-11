@@ -3,19 +3,14 @@ package pw.binom.services
 import io.ktor.network.selector.*
 import io.ktor.network.sockets.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.io.Buffer
 import kotlinx.io.readByteArray
-import pw.binom.DnsHandle
 import pw.binom.dns.protocol.DnsPackage
-import pw.binom.utils.lock
-import pw.binom.utils.synchronize
-import pw.binom.utils.unlock
-import kotlin.concurrent.atomics.AtomicBoolean
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-@OptIn(ExperimentalAtomicApi::class)
 class DnsUdpClient(
     selectorManager: SelectorManager?,
 ) : AutoCloseable {
@@ -23,7 +18,7 @@ class DnsUdpClient(
     private val closeManager: Boolean
 
     private val waters = HashMap<Pair<Short, SocketAddress>, CancellableContinuation<DnsPackage>>()
-    private val lock = AtomicBoolean(false)
+    private val mutex = Mutex()
     private var client: BoundDatagramSocket? = null
 
     init {
@@ -44,13 +39,18 @@ class DnsUdpClient(
                     val d = client.receive()
                     val bytes = d.packet.readByteArray()
                     val record = DnsPackage.read(bytes)
-                    val water = lock.synchronize {
+                    val water = mutex.withLock {
                         waters.remove(record.header.id to d.address)
                     }
                     water?.resume(record)
                 }
             } finally {
                 this@DnsUdpClient.client = null
+                // Cancel all pending continuations on disconnect
+                mutex.withLock {
+                    waters.values.forEach { it.cancel() }
+                    waters.clear()
+                }
             }
         }
     }
@@ -78,27 +78,41 @@ class DnsUdpClient(
         checkNotNull(client) { "Client not ready" }
         val buffer = Buffer()
         record.write(buffer)
-        lock.lock()
-        try {
-            client.send(Datagram(buffer, server))
-        } catch (e: Throwable) {
-            lock.unlock()
-            throw e
-        }
+
+        val key = record.header.id to server
+
         return suspendCancellableCoroutine { continuation ->
-            continuation.invokeOnCancellation {
-                lock.synchronize {
-                    waters.remove(record.header.id to server)
+            // Шаг 1: регистрируем continuation ДО отправки (fix race condition)
+            runBlocking {
+                mutex.withLock {
+                    waters[key] = continuation
                 }
             }
+
+            // Шаг 2: отправляем датаграмму ПОСЛЕ регистрации
             try {
-                waters[record.header.id to server] = continuation
+                runBlocking {
+                    client.send(Datagram(buffer, server))
+                }
             } catch (e: Throwable) {
+                // Отправка не удалась — чистим waters
+                runBlocking {
+                    mutex.withLock {
+                        waters.remove(key)
+                    }
+                }
                 continuation.resumeWithException(e)
-            } finally {
-                lock.unlock()
+                return@suspendCancellableCoroutine
             }
 
+            // Шаг 3: обработка отмены (lock не захвачен — нет дедлока)
+            continuation.invokeOnCancellation {
+                runBlocking {
+                    mutex.withLock {
+                        waters.remove(key)
+                    }
+                }
+            }
         }
     }
 }

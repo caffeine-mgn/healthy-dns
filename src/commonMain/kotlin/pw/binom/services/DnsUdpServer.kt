@@ -51,14 +51,13 @@ class DnsUdpServer(
                         logger.info { "Receive request from ${l.address.port()}: ${l.packet.remaining} bytes" }
                         manager.launch {
                             val income = DnsPackage.read(l.packet.readByteArray())
-                            if (timeout == Duration.INFINITE) {
+                            val outcome = if (timeout == Duration.INFINITE) {
                                 handler.lookup(income)
                             } else {
                                 withTimeoutOrNull(timeout) {
                                     handler.lookup(income)
                                 } ?: income.makeRefused()
                             }
-                            val outcome = handler.lookup(income)
                             val b = Buffer()
                             outcome.write(b)
                             logger.info { "Send response to ${l.address}: ${b.size} bytes" }

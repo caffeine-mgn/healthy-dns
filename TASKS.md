@@ -4,15 +4,15 @@
 
 ### 🔴 Критические (Critical)
 
-- [ ] 1. **DnsUdpServer — двойной вызов handler.lookup() (удвоение работы)**
+- [x] 1. **DnsUdpServer — двойной вызов handler.lookup() (удвоение работы)**
   Файл: `src/commonMain/kotlin/pw/binom/services/DnsUdpServer.kt`, строки ~87–98.
   `handler.lookup(income)` вызывается ДВАЖДЫ: первый раз внутри блока `if (timeout == ...)`, его результат полностью игнорируется; второй раз сразу после — его результат идёт в ответ. На каждый UDP-запрос DNS-обработчик отрабатывает дважды, что вдвое увеличивает нагрузку. Таймаут (5 сек в Main.kt) применяется к первому (бесполезному) вызову, а реальная работа идёт без таймаута.
 
-- [ ] 2. **DnsUdpClient.lookup — race condition: send() до регистрации continuation**
+- [x] 2. **DnsUdpClient.lookup — race condition: send() до регистрации continuation**
   Файл: `src/commonMain/kotlin/pw/binom/services/DnsUdpClient.kt`, метод `lookup()`.
   Datagram отправляется через `client.send()` до того, как `continuation` сохранён в `waters`. Ответ от сервера может прийти быстрее, receiver его обработает, `waters.remove(...)` вернёт null — пакет будет молча потерян. Корректный порядок: сначала зарегистрировать continuation, потом отправлять.
 
-- [ ] 3. **DnsUdpClient.lookup — потенциальный дедлок spinlock'а через invokeOnCancellation**
+- [x] 3. **DnsUdpClient.lookup — потенциальный дедлок spinlock'а через invokeOnCancellation**
   Файл: `src/commonMain/kotlin/pw/binom/services/DnsUdpClient.kt`, строки ~95–104.
   `lock` уже захвачен (через `lock.lock()`), затем вызывается `continuation.invokeOnCancellation { lock.synchronize { ... } }`. `synchronize` снова пытается захватить тот же `AtomicBoolean` spinlock. Spinlock НЕ реентерабельный — это приводит к вечному циклу (дедлок). `lock.unlock()` в `finally` так и не выполнится.
 
@@ -73,7 +73,7 @@
 
 ### 🟢 Низкие (Low)
 
-- [ ] 17. **DnsTest.kt — тест использует несуществующие/устаревшие API**
+- [x] 17. **DnsTest.kt — тест использует несуществующие/устаревшие API**
   Файл: `src/commonTest/kotlin/pw/binom/DnsTest.kt`.
   Использует `MultiFixedSizeThreadNetworkDispatcher`, `UdpNetSocket`, `InetSocketAddress.resolve` — эти классы не из текущего стека зависимостей (Ktor network). Тест, скорее всего, не компилируется.
 
@@ -87,4 +87,10 @@
 - [ ] 20. **Hardcoded config path (`config.yaml`)**
   Файл: `src/commonMain/kotlin/pw/binom/Main.kt`, строка ~30.
   Путь к конфигу жёстко зашит как `"config.yaml"`. Нет поддержки аргументов командной строки, переменных окружения.
+
+### ✅ Исправлено (в этом раунде)
+
+- [x] 21. **Написаны тесты для исправленных компонентов (20 тестов, все проходят)**
+  Файл: `src/commonTest/kotlin/pw/binom/DnsTest.kt`.
+  Тесты покрывают: `DnsHandle.withTimeout` (3), `DnsHandle.withRetry` (5), `DomainTree` (5), `DnsPackage` utils (3), wildcard-матчинг (4). Все с timeout.
 
