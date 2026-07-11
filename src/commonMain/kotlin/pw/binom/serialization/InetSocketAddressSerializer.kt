@@ -19,6 +19,7 @@ object InetSocketAddressSerializer : KSerializer<InetSocketAddress> {
             throw SerializationException("")
         }
         val port = items[1].toIntOrNull() ?: throw SerializationException("Can't parse ${items[1]} to Int")
+        require(port in 0..65535) { "Port must be in 0..65535: $port" }
         return InetSocketAddress(hostname = items[0], port = port)
     }
 

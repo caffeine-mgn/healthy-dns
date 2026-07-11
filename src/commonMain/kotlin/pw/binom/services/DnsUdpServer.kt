@@ -3,6 +3,7 @@ package pw.binom.services
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.Datagram
+import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.SocketAddress
 import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.port
@@ -33,6 +34,9 @@ class DnsUdpServer(
     private val logger = KotlinLogging.logger { }
 
     init {
+        require(bind is InetSocketAddress) { "Only InetSocketAddress is supported for UDP bind, got: $bind" }
+        require(bind.port in 1..65535) { "Invalid UDP bind port ${bind.port}: must be in 1..65535" }
+
         if (selectorManager != null) {
             this.manager = selectorManager
             closeManager = false
@@ -50,23 +54,29 @@ class DnsUdpServer(
                         val l = server.receive()
                         logger.info { "Receive request from ${l.address.port()}: ${l.packet.remaining} bytes" }
                         manager.launch {
-                            val income = DnsPackage.read(l.packet.readByteArray())
-                            val outcome = if (timeout == Duration.INFINITE) {
-                                handler.lookup(income)
-                            } else {
-                                withTimeoutOrNull(timeout) {
+                            try {
+                                val income = DnsPackage.read(l.packet.readByteArray())
+                                val outcome = if (timeout == Duration.INFINITE) {
                                     handler.lookup(income)
-                                } ?: income.makeRefused()
-                            }
-                            val b = Buffer()
-                            outcome.write(b)
-                            logger.info { "Send response to ${l.address}: ${b.size} bytes" }
-                            server.send(
-                                Datagram(
-                                    packet = b,
-                                    address = l.address
+                                } else {
+                                    withTimeoutOrNull(timeout) {
+                                        handler.lookup(income)
+                                    } ?: income.makeRefused()
+                                }
+                                val b = Buffer()
+                                outcome.write(b)
+                                logger.info { "Send response to ${l.address}: ${b.size} bytes" }
+                                server.send(
+                                    Datagram(
+                                        packet = b,
+                                        address = l.address
+                                    )
                                 )
-                            )
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Throwable) {
+                                logger.error(e) { "Error processing UDP DNS request from ${l.address}" }
+                            }
                         }
                     } catch (e: CancellationException) {
                         logger.warn(e) { "Dns UDP server JOB cancelled" }

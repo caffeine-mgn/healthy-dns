@@ -4,8 +4,6 @@ import kotlin.jvm.JvmInline
 
 @JvmInline
 value class HostName(val raw: String) {
-    val host
-        get() = raw
     val isIpv4: Boolean
         get() {
             val items = raw.split('.')

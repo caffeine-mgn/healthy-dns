@@ -20,7 +20,7 @@ fun DnsHandle.withRetry(count: Int) =
         DnsHandle { pack ->
             while (count > 0) {
                 val result = self.lookup(pack)
-                if (result.header.rcode != RCode.NOERROR) {
+                if (result.header.rcode == RCode.SERVFAIL) {
                     count--
                     continue
                 }

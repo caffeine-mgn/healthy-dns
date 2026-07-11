@@ -6,15 +6,16 @@ import io.ktor.http.*
 import io.ktor.network.selector.*
 import io.ktor.network.sockets.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import pw.binom.utils.HostName
-import pw.binom.utils.synchronize
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration
 
-@OptIn(DelicateCoroutinesApi::class, ExperimentalAtomicApi::class)
+@OptIn(DelicateCoroutinesApi::class)
 class IpService(
     private val httpClient: HttpClient,
     private val networkManager: SelectorManager,
@@ -124,44 +125,38 @@ class IpService(
 
     private val ips = HashMap<String, IpHolderImpl>()
 
-    private val lock = AtomicBoolean(false)
+    private val lock = Mutex()
 
-    operator fun get(ip: HostName): Ip? = lock.synchronize { ips[ip.raw] }
-    operator fun get(ip: String): Ip? = lock.synchronize { ips[ip] }
+    suspend operator fun get(ip: HostName): Ip? = lock.withLock { ips[ip.raw] }
+    suspend operator fun get(ip: String): Ip? = lock.withLock { ips[ip] }
 
     fun addIp(ip: HostName, checker: Checker): Ip? {
-        val impl = lock.synchronize {
-            if (ips.containsKey(ip.raw)) {
-                return null
+        val impl = runBlocking {
+            lock.withLock {
+                if (ips.containsKey(ip.raw)) {
+                    return@withLock null
+                }
+                val checkerImpl = when (checker) {
+                    is Checker.Tcp -> TcpChecker(data = checker, networkManager = networkManager)
+                    is Checker.Http -> HttpChecker(data = checker, client = httpClient)
+                }
+                val ipImpl = IpHolderImpl(address = ip, checkerImpl)
+                ips[ip.raw] = ipImpl
+                ipImpl
             }
-            val checkerImpl = when (checker) {
-                is Checker.Tcp -> TcpChecker(data = checker, networkManager = networkManager)
-                is Checker.Http -> HttpChecker(data = checker, client = httpClient)
-            }
-            val ipImpl = IpHolderImpl(address = ip, checkerImpl)
-            ips[ip.host] = ipImpl
-            ipImpl
-        }
+        } ?: return null
         impl.checker.start(context = Dispatchers.IO)
         return impl
     }
 
     fun removeIp(ip: HostName): Boolean {
-        val ipImpl = lock.synchronize {
-            ips.remove(ip.host) ?: return false
-        }
+        val ipImpl = runBlocking {
+            lock.withLock {
+                ips.remove(ip.raw)
+            }
+        } ?: return false
         ipImpl.checker.close()
         return true
     }
 
-    init {
-        val actualIps = lock.synchronize {
-            val result = HashSet(ips.values)
-            ips.clear()
-            result
-        }
-        actualIps.forEach {
-            it.checker.close()
-        }
-    }
 }

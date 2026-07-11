@@ -24,68 +24,78 @@ import pw.binom.services.DomainsServices
 import pw.binom.services.IpService
 import pw.binom.services.LookupService
 import pw.binom.utils.request
+import pw.binom.web.WebService
 import kotlin.time.Duration.Companion.seconds
 
 @OptIn(DelicateCoroutinesApi::class)
 fun main(args: Array<String>) {
+    val configPath = args.firstOrNull() ?: "config.yaml"
     runBlocking {
-        val configFile = Path("config.yaml")
+        val configFile = Path(configPath)
         if (!SystemFileSystem.exists(configFile)) {
-            println("Config file missing")
+            println("Config file missing: $configPath")
             return@runBlocking
         }
         val config = SystemFileSystem.source(configFile).buffered().use {
             Yaml.default.decodeFromString(GlobalConfig.serializer(), it.readText())
         }
-//    val config = DnsServerProperty(
-//        bind = InetSocketAddress(port = 5333, hostname = "0.0.0.0"),
-//        packageSize = 1500,
-//    )
-//    val domains = DomainsProperty(
-//        records = listOf(
-//            DomainsProperty.Record(
-//                ips = listOf("192.168.0.1"),
-//                domain = "test.local",
-//            ),
-//            DomainsProperty.Record(
-//                ips = listOf("test.local"),
-//                domain = "www.test.local",
-//            )
-//        )
-//    )
+
         val selectorManager = SelectorManager()
         val httpClient = HttpClient()
-        val ip = IpService(
-            httpClient = httpClient,
-            networkManager = selectorManager,
-        )
-        val dnsClient = DnsUdpClient(selectorManager)
-        val domainsServices = DomainsServices(
-            ipService = ip,
-            dnsClientService = dnsClient,
-            domainsProperty = config.domains,
-
-            )
-        val lookupService = LookupService(domainsServices = domainsServices)
-
-        val dnsHandle = DnsHandle { pack ->
-            lookupService.lookup(pack)
+        val webService = if (config.web.enabled) {
+            val ws = WebService(config.web)
+            ws.start()
+            println("Web server started on http://${config.web.host}:${config.web.port}")
+            ws
+        } else {
+            println("Web server disabled")
+            null
         }
-            .withTimeout(5.seconds)
-            .withRetry(3)
 
-        val udpServer = DnsUdpServer(
-            selectorManager = selectorManager,
-            bind = config.server.bind,
-            handler = dnsHandle,
-        )
+        try {
+            val ip = IpService(
+                httpClient = httpClient,
+                networkManager = selectorManager,
+            )
+            val dnsClient = DnsUdpClient(selectorManager)
+            try {
+                val domainsServices = DomainsServices(
+                    ipService = ip,
+                    dnsClientService = dnsClient,
+                    domainsProperty = config.domains,
+                )
+                val lookupService = LookupService(domainsServices = domainsServices)
 
-        val tcpserver = DnsTcpServer(
-            bind = config.server.bind,
-            selectorManager = selectorManager,
-            handler = dnsHandle,
-        )
-        tcpserver.join()
-        udpServer.join()
+                val dnsHandle = DnsHandle { pack ->
+                    lookupService.lookup(pack)
+                }
+                    .withTimeout(5.seconds)
+                    .withRetry(3)
+
+                val udpServer = DnsUdpServer(
+                    selectorManager = selectorManager,
+                    bind = config.server.bind,
+                    handler = dnsHandle,
+                )
+                val tcpserver = DnsTcpServer(
+                    bind = config.server.bind,
+                    selectorManager = selectorManager,
+                    handler = dnsHandle,
+                )
+                try {
+                    tcpserver.join()
+                    udpServer.join()
+            } finally {
+                    tcpserver.close()
+                    udpServer.close()
+                }
+            } finally {
+                dnsClient.close()
+            }
+        } finally {
+            webService?.stop()
+            httpClient.close()
+            selectorManager.close()
+        }
     }
 }

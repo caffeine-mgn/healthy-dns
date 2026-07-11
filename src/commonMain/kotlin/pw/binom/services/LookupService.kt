@@ -28,6 +28,9 @@ class LookupService(
 
     @OptIn(ExperimentalCoroutinesApi::class)
     suspend fun query(record: DnsPackage): DnsPackage {
+        // Periodic cleanup of expired temporal records
+        cleanupExpiredTemporalRecords()
+
         val temporalRecords = record.queries
             .asFlow()
             .filter { it.clazz == DnsClass.IN }
@@ -51,7 +54,7 @@ class LookupService(
             .filter { it.type == DnsType.A }
             .flatMapConcat { query ->
                 logger.info { "Query ${query.name}" }
-                domainsServices.findRecords(query.name)
+                domainsServices.findRecords(query.name, listOf(query.type))
                     .asFlow()
                     .map {
                         query.name to it
@@ -89,19 +92,37 @@ class LookupService(
     private data class StoredRecord(
         val rdata: RData,
         val ttl: UInt,
+        val expiresAt: Long, // System.nanoTime() + ttl * 1_000_000_000
     )
 
     private class TemporalRecord {
         // Map: Type -> List of records with data & ttl
         private val records = HashMap<DnsType, MutableList<StoredRecord>>()
-        fun getRecords(type: DnsType): List<StoredRecord> = records[type] ?: emptyList()
+
+        /** Remove expired records, then return active for given type */
+        fun getRecords(type: DnsType): List<StoredRecord> {
+            val list = records[type] ?: return emptyList()
+            val now = System.nanoTime()
+            val active = list.filter { it.expiresAt > now }
+            if (active.size != list.size) {
+                if (active.isEmpty()) {
+                    records.remove(type)
+                } else {
+                    records[type] = active.toMutableList()
+                }
+            }
+            return active
+        }
 
         fun add(type: DnsType, rdata: RData, ttl: UInt) {
             val list = records.getOrPut(type) { mutableListOf() }
-            // Проверяем на дубликаты (сравниваем только данные, как в вашем коде)
+            val now = System.nanoTime()
+            // Clean expired before adding new
+            list.removeAll { it.expiresAt <= now }
             if (list.none { it.rdata.subData.contentEquals(rdata.subData) }) {
-                list.add(StoredRecord(rdata, ttl))
+                list.add(StoredRecord(rdata, ttl, now + ttl.toLong() * 1_000_000_000L))
             }
+            if (list.isEmpty()) records.remove(type)
         }
 
         fun removeExact(type: DnsType, rdata: RData) {
@@ -122,12 +143,20 @@ class LookupService(
             records.clear()
         }
 
-        // Метод для получения записей (для обработки обычных DNS запросов)
-        fun get(type: DnsType): List<StoredRecord> {
-            return records[type]?.toList() ?: emptyList()
-        }
-
         fun isEmpty() = records.isEmpty()
+
+        /** Remove all expired records across all types */
+        fun cleanupExpired() {
+            val now = System.nanoTime()
+            val iter = records.entries.iterator()
+            while (iter.hasNext()) {
+                val entry = iter.next()
+                entry.value.removeAll { it.expiresAt <= now }
+                if (entry.value.isEmpty()) {
+                    iter.remove()
+                }
+            }
+        }
     }
 
     private val temporalRecords = HashMap<String, TemporalRecord>()
@@ -136,18 +165,28 @@ class LookupService(
         logger.info { "Add ${resource.type} to ${resource.name}" }
         val record = temporalRecords.getOrPut(resource.name) { TemporalRecord() }
         record.add(resource.type, resource.normalizedRdata()!!, resource.ttl)
+        // Remove empty outer containers
+        if (record.isEmpty()) {
+            temporalRecords.remove(resource.name)
+        }
     }
 
     private fun removeExact(domain: String, resource: Resource) {
         logger.info { "Remove ${resource.type} from ${resource.name}" }
         val record = temporalRecords[resource.name] ?: return
         record.removeExact(resource.type, resource.normalizedRdata()!!)
+        if (record.isEmpty()) {
+            temporalRecords.remove(resource.name)
+        }
     }
 
     private fun removeAllOfType(domain: String, resource: Resource) {
         logger.info { "Remove ALL ${resource.type} from ${resource.name}" }
         val record = temporalRecords[resource.name] ?: return
         record.removeAllOfType(resource.type)
+        if (record.isEmpty()) {
+            temporalRecords.remove(resource.name)
+        }
     }
 
     private fun removeAllOfName(domain: String, resource: Resource) {
@@ -184,6 +223,19 @@ class LookupService(
             authority = emptyList(),
             additional = emptyList()
         )
+    }
+
+    /** Remove expired temporal records from the outer map */
+    private fun cleanupExpiredTemporalRecords() {
+        val now = System.nanoTime()
+        val iter = temporalRecords.entries.iterator()
+        while (iter.hasNext()) {
+            val entry = iter.next()
+            entry.value.cleanupExpired()
+            if (entry.value.isEmpty()) {
+                iter.remove()
+            }
+        }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

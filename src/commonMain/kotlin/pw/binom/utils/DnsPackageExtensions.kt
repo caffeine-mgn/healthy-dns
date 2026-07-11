@@ -47,3 +47,21 @@ fun DnsPackage.makeRefused() = DnsPackage(
     authority = emptyList(),
     additional = emptyList()
 )
+
+fun DnsPackage.makeServerFail() = DnsPackage(
+    header = DnsHeader(
+        id = header.id,
+        rd = true,
+        tc = false,
+        aa = true,
+        opcode = header.opcode,
+        qr = true,
+        ra = false,
+        z = 0,
+        rcode = RCode.SERVFAIL,
+    ),
+    queries = emptyList(),
+    answer = emptyList(),
+    authority = emptyList(),
+    additional = emptyList()
+)

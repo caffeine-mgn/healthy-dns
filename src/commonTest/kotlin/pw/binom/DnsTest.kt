@@ -17,6 +17,24 @@ import kotlin.time.Duration.Companion.seconds
 
 class DnsTest {
 
+    private fun DnsPackage.makeServerFail() = DnsPackage(
+        header = DnsHeader(
+            id = header.id,
+            rd = true,
+            tc = false,
+            aa = true,
+            opcode = header.opcode,
+            qr = true,
+            ra = false,
+            z = 0,
+            rcode = RCode.SERVFAIL,
+        ),
+        queries = emptyList(),
+        answer = emptyList(),
+        authority = emptyList(),
+        additional = emptyList()
+    )
+
     // ========================
     // DnsHandle.withTimeout
     // ========================
@@ -77,16 +95,16 @@ class DnsTest {
     }
 
     @Test
-    fun `withRetry retries on non-NOERROR`() = runTest {
+    fun `withRetry retries on SERVFAIL only`() = runTest {
         var callCount = 0
         val handle = DnsHandle { pack: DnsPackage ->
             callCount++
-            pack.makeRefused()  // always refused
+            pack.makeServerFail()  // always SERVFAIL
         }.withRetry(3)
 
         val request = DnsPackage.request("example.com")
         val result = handle.lookup(request)
-        // 3 retries + final makeRefused from withRetry
+        // 3 retries exhausted + final makeRefused
         assertEquals(3, callCount)
         assertEquals(RCode.REFUSED, result.header.rcode)
     }
@@ -97,7 +115,7 @@ class DnsTest {
         val handle = DnsHandle { pack: DnsPackage ->
             callCount++
             if (callCount < 3) {
-                pack.makeRefused()
+                pack.makeServerFail()
             } else {
                 pack  // success on 3rd attempt
             }

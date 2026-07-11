@@ -31,9 +31,9 @@ class DomainsServices(
     )
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    suspend fun findRecords(name: String): List<DnsRecord> {
+    suspend fun findRecords(name: String, queryTypes: List<DnsType> = listOf(DnsType.A, DnsType.AAAA)): List<DnsRecord> {
         val controller = domains.get(name.split("."))?.value ?: return emptyList()
-        val request = DnsPackage.request(hostname = name, listOf(DnsType.A))
+        val request = DnsPackage.request(hostname = name, queryTypes)
         val downStreamList = controller.downStream
             .asFlow()
             .flatMapConcat {

@@ -5,6 +5,8 @@ import io.ktor.network.sockets.*
 import io.ktor.utils.io.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.io.Buffer
 import kotlinx.io.EOFException
 import kotlinx.io.IOException
@@ -15,8 +17,8 @@ import pw.binom.dns.protocol.*
 class DnsTcpServer(
     selectorManager: SelectorManager?,
     private val bind: SocketAddress,
-//    private val lookupService: LookupService,
     private val handler: DnsHandle,
+    private val maxConnections: Int = 100,
 ) : AutoCloseable {
 
     private val selectorManager: SelectorManager
@@ -32,12 +34,15 @@ class DnsTcpServer(
         }
     }
 
+    private val connectionSemaphore = Semaphore(maxConnections)
+
     private var job = this.selectorManager.launch(start = CoroutineStart.LAZY) {
         aSocket(this@DnsTcpServer.selectorManager).tcp().bind(bind)
             .use { server ->
                 while (isActive) {
                     val newClient = server.accept()
                     GlobalScope.launch(Dispatchers.IO) {
+                        connectionSemaphore.withPermit {
                         newClient.use { client ->
                             val read = client.openReadChannel()
                             val write = client.openWriteChannel()
@@ -62,6 +67,7 @@ class DnsTcpServer(
                                     break
                                 }
                             }
+                        }
                         }
                     }
                 }
