@@ -6,5 +6,4 @@ pluginManagement {
   }
 }
 rootProject.name = "powerdns-health"
-include(":front")
 include(":shared")

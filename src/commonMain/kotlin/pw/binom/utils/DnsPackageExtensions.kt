@@ -42,7 +42,8 @@ fun DnsPackage.makeRefused() = DnsPackage(
         z = 0,
         rcode = RCode.REFUSED,
     ),
-    queries = emptyList(),
+    // Question section MUST be echoed back — resolvers reject/can't match responses without it
+    queries = this.queries,
     answer = emptyList(),
     authority = emptyList(),
     additional = emptyList()
@@ -60,7 +61,8 @@ fun DnsPackage.makeServerFail() = DnsPackage(
         z = 0,
         rcode = RCode.SERVFAIL,
     ),
-    queries = emptyList(),
+    // Question section MUST be echoed back — resolvers reject/can't match responses without it
+    queries = this.queries,
     answer = emptyList(),
     authority = emptyList(),
     additional = emptyList()

@@ -35,13 +35,14 @@ class DnsTcpServer(
     }
 
     private val connectionSemaphore = Semaphore(maxConnections)
+    private val connectionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var job = this.selectorManager.launch(start = CoroutineStart.LAZY) {
         aSocket(this@DnsTcpServer.selectorManager).tcp().bind(bind)
             .use { server ->
                 while (isActive) {
                     val newClient = server.accept()
-                    GlobalScope.launch(Dispatchers.IO) {
+                    connectionScope.launch {
                         connectionSemaphore.withPermit {
                         newClient.use { client ->
                             val read = client.openReadChannel()
@@ -89,5 +90,6 @@ class DnsTcpServer(
 
     override fun close() {
         job.cancel()
+        connectionScope.cancel()
     }
 }

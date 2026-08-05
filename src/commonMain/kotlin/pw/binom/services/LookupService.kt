@@ -19,6 +19,10 @@ import pw.binom.dns.protocol.RData
 import pw.binom.dns.protocol.Resource
 import pw.binom.dns.protocol.utils.normalizedRdata
 import pw.binom.utils.makeRefused
+import kotlin.time.TimeSource
+
+// Монотонный таймер, доступный и на JVM, и на Kotlin/Native (java.lang.System нет на native)
+private fun nowNanos(): Long = TimeSource.Monotonic.markNow().elapsedNow().inWholeNanoseconds
 
 class LookupService(
     private val domainsServices: DomainsServices,
@@ -53,7 +57,7 @@ class LookupService(
             .filter { it.clazz == DnsClass.IN }
             .filter { it.type == DnsType.A }
             .flatMapConcat { query ->
-                logger.info { "Query ${query.name}" }
+                logger.debug { "Query ${query.name}" }
                 domainsServices.findRecords(query.name, listOf(query.type))
                     .asFlow()
                     .map {
@@ -92,7 +96,7 @@ class LookupService(
     private data class StoredRecord(
         val rdata: RData,
         val ttl: UInt,
-        val expiresAt: Long, // System.nanoTime() + ttl * 1_000_000_000
+        val expiresAt: Long, // nowNanos() + ttl * 1_000_000_000
     )
 
     private class TemporalRecord {
@@ -102,7 +106,7 @@ class LookupService(
         /** Remove expired records, then return active for given type */
         fun getRecords(type: DnsType): List<StoredRecord> {
             val list = records[type] ?: return emptyList()
-            val now = System.nanoTime()
+            val now = nowNanos()
             val active = list.filter { it.expiresAt > now }
             if (active.size != list.size) {
                 if (active.isEmpty()) {
@@ -116,7 +120,7 @@ class LookupService(
 
         fun add(type: DnsType, rdata: RData, ttl: UInt) {
             val list = records.getOrPut(type) { mutableListOf() }
-            val now = System.nanoTime()
+            val now = nowNanos()
             // Clean expired before adding new
             list.removeAll { it.expiresAt <= now }
             if (list.none { it.rdata.subData.contentEquals(rdata.subData) }) {
@@ -147,7 +151,7 @@ class LookupService(
 
         /** Remove all expired records across all types */
         fun cleanupExpired() {
-            val now = System.nanoTime()
+            val now = nowNanos()
             val iter = records.entries.iterator()
             while (iter.hasNext()) {
                 val entry = iter.next()
@@ -227,7 +231,7 @@ class LookupService(
 
     /** Remove expired temporal records from the outer map */
     private fun cleanupExpiredTemporalRecords() {
-        val now = System.nanoTime()
+        val now = nowNanos()
         val iter = temporalRecords.entries.iterator()
         while (iter.hasNext()) {
             val entry = iter.next()

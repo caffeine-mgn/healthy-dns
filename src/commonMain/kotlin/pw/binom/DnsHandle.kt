@@ -16,12 +16,14 @@ fun DnsHandle.withRetry(count: Int) =
         this
     } else {
         val self = this
-        var count = count
         DnsHandle { pack ->
-            while (count > 0) {
+            // Счётчик попыток на каждый вызов — общий мутабельный счётчик
+            // между параллельными запросами был бы гонкой
+            var remaining = count
+            while (remaining > 0) {
                 val result = self.lookup(pack)
                 if (result.header.rcode == RCode.SERVFAIL) {
-                    count--
+                    remaining--
                     continue
                 }
                 return@DnsHandle result

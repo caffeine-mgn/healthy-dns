@@ -1,8 +1,11 @@
 package pw.binom.services
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.network.sockets.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapConcat
 import kotlinx.coroutines.flow.toList
 import pw.binom.DomainTree
@@ -30,24 +33,34 @@ class DomainsServices(
         val ttl: Duration,
     )
 
+    private val logger = KotlinLogging.logger { }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     suspend fun findRecords(name: String, queryTypes: List<DnsType> = listOf(DnsType.A, DnsType.AAAA)): List<DnsRecord> {
         val controller = domains.get(name.split("."))?.value ?: return emptyList()
         val request = DnsPackage.request(hostname = name, queryTypes)
         val downStreamList = controller.downStream
             .asFlow()
-            .flatMapConcat {
-                dnsClientService.lookup(request, it)
-                    .answer
-                    .map { resource ->
-                        DnsRecord(
-                            content = resource.normalizedRdata()
-                                ?: throw IllegalStateException("Unknown type ${resource.type}"),
-                            type = resource.type,
-                            ttl = resource.ttl.toInt().seconds,
-                        )
-                    }
-                    .asFlow()
+            .flatMapConcat { server ->
+                try {
+                    dnsClientService.lookup(request, server)
+                        .answer
+                        .map { resource ->
+                            DnsRecord(
+                                content = resource.normalizedRdata()
+                                    ?: throw IllegalStateException("Unknown type ${resource.type}"),
+                                type = resource.type,
+                                ttl = resource.ttl.toInt().seconds,
+                            )
+                        }
+                        .asFlow()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Мёртвый/медленный апстрим не должен ломать весь ответ — пропускаем его
+                    logger.warn(e) { "Downstream $server lookup failed for $name" }
+                    emptyFlow()
+                }
             }
         return controller.ips
             .mapNotNull { ip ->

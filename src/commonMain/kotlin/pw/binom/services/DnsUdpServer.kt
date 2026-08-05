@@ -13,6 +13,8 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Buffer
 import kotlinx.io.readByteArray
@@ -26,16 +28,19 @@ class DnsUdpServer(
     selectorManager: SelectorManager?,
     private val bind: SocketAddress,
     private val handler: DnsHandle,
-    private val timeout: Duration = Duration.INFINITE
+    private val timeout: Duration = Duration.INFINITE,
+    private val maxConcurrency: Int = 1024,
 ) : AutoCloseable {
     private val manager: SelectorManager
     private val closeManager: Boolean
 
     private val logger = KotlinLogging.logger { }
+    private val semaphore = Semaphore(maxConcurrency)
 
     init {
         require(bind is InetSocketAddress) { "Only InetSocketAddress is supported for UDP bind, got: $bind" }
         require(bind.port in 1..65535) { "Invalid UDP bind port ${bind.port}: must be in 1..65535" }
+        require(maxConcurrency > 0) { "maxConcurrency must be positive" }
 
         if (selectorManager != null) {
             this.manager = selectorManager
@@ -52,30 +57,32 @@ class DnsUdpServer(
                 while (currentCoroutineContext().isActive) {
                     try {
                         val l = server.receive()
-                        logger.info { "Receive request from ${l.address.port()}: ${l.packet.remaining} bytes" }
+                        logger.debug { "Receive request from ${l.address.port()}: ${l.packet.remaining} bytes" }
                         manager.launch {
-                            try {
-                                val income = DnsPackage.read(l.packet.readByteArray())
-                                val outcome = if (timeout == Duration.INFINITE) {
-                                    handler.lookup(income)
-                                } else {
-                                    withTimeoutOrNull(timeout) {
+                            semaphore.withPermit {
+                                try {
+                                    val income = DnsPackage.read(l.packet.readByteArray())
+                                    val outcome = if (timeout == Duration.INFINITE) {
                                         handler.lookup(income)
-                                    } ?: income.makeRefused()
-                                }
-                                val b = Buffer()
-                                outcome.write(b)
-                                logger.info { "Send response to ${l.address}: ${b.size} bytes" }
-                                server.send(
-                                    Datagram(
-                                        packet = b,
-                                        address = l.address
+                                    } else {
+                                        withTimeoutOrNull(timeout) {
+                                            handler.lookup(income)
+                                        } ?: income.makeRefused()
+                                    }
+                                    val b = Buffer()
+                                    outcome.write(b)
+                                    logger.debug { "Send response to ${l.address}: ${b.size} bytes" }
+                                    server.send(
+                                        Datagram(
+                                            packet = b,
+                                            address = l.address
+                                        )
                                     )
-                                )
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Throwable) {
-                                logger.error(e) { "Error processing UDP DNS request from ${l.address}" }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Throwable) {
+                                    logger.error(e) { "Error processing UDP DNS request from ${l.address}" }
+                                }
                             }
                         }
                     } catch (e: CancellationException) {

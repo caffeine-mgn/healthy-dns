@@ -2,13 +2,16 @@ package pw.binom.health.shared.model
 
 import kotlinx.serialization.Serializable
 
-/**
- * DTO для DNS-записи, отдаваемой через API.
- */
 @Serializable
 data class DnsRecordDto(
     val domain: String,
-    val type: String,
-    val content: String,
-    val ttl: Long,
+    val ips: List<String> = emptyList(),
+    val ttl: String = "PT30S",
+    val policy: String = "ALL_HEALTHY",
+    val downstream: DownstreamDto? = null,
+)
+
+@Serializable
+data class DownstreamDto(
+    val ips: List<String> = emptyList(),
 )

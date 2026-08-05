@@ -2,6 +2,7 @@ package pw.binom.services
 
 import io.ktor.client.*
 import io.ktor.client.request.*
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.*
 import io.ktor.network.selector.*
 import io.ktor.network.sockets.*
@@ -87,7 +88,9 @@ class IpService(
             get() = data.timeout
 
         override suspend fun isHealthy(): Boolean {
-            aSocket(networkManager).tcp().connect(data.address).awaitClosed()
+            aSocket(networkManager).tcp().connect(data.address).use { socket ->
+                socket.awaitClosed()
+            }
             return true
         }
     }
@@ -102,7 +105,7 @@ class IpService(
             get() = data.timeout
 
         override suspend fun isHealthy(): Boolean {
-            val connection = try {
+            val response = try {
                 client.request {
                     this.url(data.url)
                     this.method = data.method
@@ -110,7 +113,13 @@ class IpService(
             } catch (e: Exception) {
                 return false
             }
-            return connection.status.value == data.responseCode
+            return try {
+                response.status.value == data.responseCode
+            } finally {
+                // Обязательно освобождаем соединение: без чтения/закрытия тела
+                // ответа Ktor удерживает соединение в пуле (утечка ФД)
+                response.bodyAsChannel().cancel(null)
+            }
         }
 
     }

@@ -8,16 +8,24 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.io.Buffer
 import kotlinx.io.readByteArray
 import pw.binom.dns.protocol.DnsPackage
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+
+/**
+ * Исключение: downstream не ответил в пределах [DnsUdpClient.timeout].
+ * Отличается от [TimeoutCancellationException] тем, что НЕ является отменой
+ * текущей корутины — это ожидаемый сбой конкретного апстрима.
+ */
+class DownstreamTimeoutException(message: String) : Exception(message)
 
 class DnsUdpClient(
     selectorManager: SelectorManager?,
+    private val timeout: Duration = 3.seconds,
 ) : AutoCloseable {
     private val selectorManager: SelectorManager
     private val closeManager: Boolean
 
-    private val waters = HashMap<Pair<Short, SocketAddress>, CancellableContinuation<DnsPackage>>()
+    private val waters = HashMap<Pair<Short, SocketAddress>, CompletableDeferred<DnsPackage>>()
     private val mutex = Mutex()
     private var client: BoundDatagramSocket? = null
 
@@ -42,7 +50,7 @@ class DnsUdpClient(
                     val water = mutex.withLock {
                         waters.remove(record.header.id to d.address)
                     }
-                    water?.resume(record)
+                    water?.complete(record)
                 }
             } finally {
                 this@DnsUdpClient.client = null
@@ -80,39 +88,37 @@ class DnsUdpClient(
         record.write(buffer)
 
         val key = record.header.id to server
+        val deferred = CompletableDeferred<DnsPackage>()
 
-        return suspendCancellableCoroutine { continuation ->
-            // Шаг 1: регистрируем continuation ДО отправки (fix race condition)
-            runBlocking {
-                mutex.withLock {
-                    waters[key] = continuation
-                }
-            }
+        // Шаг 1: регистрируем ожидание ДО отправки (fix race condition)
+        mutex.withLock {
+            waters[key] = deferred
+        }
 
-            // Шаг 2: отправляем датаграмму ПОСЛЕ регистрации
-            try {
-                runBlocking {
-                    client.send(Datagram(buffer, server))
-                }
-            } catch (e: Throwable) {
-                // Отправка не удалась — чистим waters
-                runBlocking {
-                    mutex.withLock {
-                        waters.remove(key)
-                    }
-                }
-                continuation.resumeWithException(e)
-                return@suspendCancellableCoroutine
+        // Шаг 2: отправляем датаграмму ПОСЛЕ регистрации
+        try {
+            client.send(Datagram(buffer, server))
+        } catch (e: Throwable) {
+            mutex.withLock {
+                waters.remove(key)
             }
+            deferred.cancel()
+            throw e
+        }
 
-            // Шаг 3: обработка отмены (lock не захвачен — нет дедлока)
-            continuation.invokeOnCancellation {
-                runBlocking {
-                    mutex.withLock {
-                        waters.remove(key)
-                    }
-                }
+        // Шаг 3: ждём ответ, но не дольше собственного таймаута —
+        // мёртвый/недоступный апстрим не должен вешать весь запрос.
+        return try {
+            withTimeout(timeout) {
+                deferred.await()
             }
+        } catch (e: TimeoutCancellationException) {
+            throw DownstreamTimeoutException("No response from $server within $timeout")
+        } finally {
+            mutex.withLock {
+                waters.remove(key)
+            }
+            deferred.cancel()
         }
     }
 }

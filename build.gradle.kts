@@ -49,7 +49,8 @@ kotlin {
             api(libs.ktor.server.html.builder)
             api(libs.serialization.yaml)
             api(libs.serialization.json)
-            api("io.github.oshai:kotlin-logging:7.0.3")
+            api(libs.kotlin.logging)
+            api(libs.mcp.sdk.server)
         }
         jvmMain {
             dependencies {
@@ -66,21 +67,6 @@ kotlin {
     }
 }
 
-val frontendDistDir = project.file("front/build/dist/js/productionExecutable")
-val resourcesStaticDir = project.layout.projectDirectory.dir("src/jvmMain/resources/static")
-
-val frontendCopy by tasks.registering(Copy::class) {
-    dependsOn(":front:jsBrowserDistribution")
-    group = "build"
-    description = "Copies frontend JS distribution into JVM resources"
-    from(frontendDistDir)
-    into(resourcesStaticDir)
-    duplicatesStrategy = DuplicatesStrategy.INCLUDE
-}
-
-tasks.named("jvmProcessResources") {
-    dependsOn(frontendCopy)
-}
 repositories {
 //    maven {
 //        this.url = uri("https://central.sonatype.com/repository/maven-snapshots/")

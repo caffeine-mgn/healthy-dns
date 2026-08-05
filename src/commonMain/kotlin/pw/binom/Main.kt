@@ -64,6 +64,21 @@ fun main(args: Array<String>) {
                     dnsClientService = dnsClient,
                     domainsProperty = config.domains,
                 )
+
+                // Init WebService with live data
+                webService?.init(
+                    domainsProperty = config.domains,
+                    ipService = ip,
+                    onConfigUpdate = { updated ->
+                        val newConfig = config.copy(domains = updated)
+                        val text = Yaml.default.encodeToString(GlobalConfig.serializer(), newConfig)
+                        SystemFileSystem.sink(configFile).buffered().use { sink ->
+                            sink.write(text.encodeToByteArray())
+                        }
+                        println("Config saved to $configPath — restart DNS server to apply changes")
+                    },
+                )
+
                 val lookupService = LookupService(domainsServices = domainsServices)
 
                 val dnsHandle = DnsHandle { pack ->

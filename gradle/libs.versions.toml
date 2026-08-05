@@ -1,11 +1,11 @@
 [versions]
-#kotlinx-io = "0.9.0"
 kotlin = "2.3.10"
 ktor = "3.4.1"
 kotlinx-serialization = "1.10.0"
 kotlinx-coroutines = "1.10.2"
 binom-dns="0.0.2"
-compose = "1.10.3"
+mcp = "0.14.0"
+kotlin-logging = "7.0.3"
 
 [libraries]
 binom-dns = { module = "pw.binom.dns:core", version.ref = "binom-dns" }
@@ -20,13 +20,10 @@ serialization-yaml = { module = "io.heapy.kotaml:kotaml", version = "0.107.0" }
 serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
-compose-runtime = { group = "org.jetbrains.compose.runtime", name = "runtime", version.ref = "compose" }
-compose-ui = { group = "org.jetbrains.compose.ui", name = "ui", version.ref = "compose" }
-compose-html-core = { group = "org.jetbrains.compose.html", name = "html-core", version.ref = "compose" }
+mcp-sdk-server = { module = "io.modelcontextprotocol:kotlin-sdk-server", version.ref = "mcp" }
+kotlin-logging = { module = "io.github.oshai:kotlin-logging", version.ref = "kotlin-logging" }
 
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlinx-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
-kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
-compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "compose" }

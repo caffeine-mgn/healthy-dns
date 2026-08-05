@@ -95,3 +95,33 @@
 - [ ] 28. **Ограниченный параллелизм в DnsUdpServer (limitedParallelism)**
   Файл: `DnsUdpServer.kt`.
   Каждый UDP-пакет — новая корутина без лимита. Для тысяч RPS стоит добавить `limitedParallelism` на диспетчере.
+
+---
+
+## Доп. фиксы 2026-08-05 (диагностика прода: 192.168.76.109)
+
+Деплой на проде был со сборки от 2026-06-21 (до коммитов-фиксов 93cb7dc/4dee5b3) — на живом боксе воспроизведены 100% CPU и полный фриз DNS при бёрсте ~400 запросов (load 4→13, 3 потока в R). Дополнительно внесено:
+
+- [x] 29. **DnsUdpClient — внутренний таймаут и убирание `runBlocking` из suspend-пути**
+  `lookup()` переписан на `CompletableDeferred` + `withTimeout(3s)`; при таймауте бросается `DownstreamTimeoutException` (не `TimeoutCancellationException`, чтобы не путать с отменой корутины). Мёртвый апстрим больше не вешает запрос на 5с → REFUSED.
+
+- [x] 30. **DomainsServices.findRecords — толерантность к мёртвому downstream**
+  Сбой/таймаут апстрима логируется и пропускается (`emptyFlow`), отмена корутины (`CancellationException`) пробрасывается.
+
+- [x] 31. **makeRefused/makeServerFail — сохраняют question-секцию**
+  Раньше `queries = emptyList()` — резолверы отвергали ответ как «missing question section» (клиент видел «сервер не заведует доменом»).
+
+- [x] 32. **DnsUdpServer — семафор на параллельные обработчики (maxConcurrency=1024)**
+  Корутина на пакет без лимита убрана; покадровые логи Receive/Send переведены на DEBUG.
+
+- [x] 33. **withRetry — счётчик попыток на вызов**
+  Общий мутабельный `count` между параллельными запросами был гонкой.
+
+- [x] 34. **IpService — освобождение ресурсов health-чеков**
+  `HttpChecker`: `response.bodyAsChannel().cancel(null)` после чтения статуса (иначе Ktor держит соединение); `TcpChecker`: сокет в `use {}`.
+
+- [x] 35. **DnsTcpServer — своя scope вместо GlobalScope**
+  `connectionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)`, отменяется в `close()`.
+
+- [x] 36. **Лог-шторм**
+  «Query …» в LookupService и Receive/Send в DnsUdpServer → DEBUG (на проде journald разросся до 813МБ, journald держал 210МБ RSS на боксе с 512МБ RAM).
