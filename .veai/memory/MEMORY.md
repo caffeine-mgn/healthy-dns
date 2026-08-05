@@ -1,0 +1,1 @@
+- [prod-dns-109-stale-binary-and-root-cause](prod-dns-109-stale-binary-and-root-cause-3bfb99d8e83c.md) — local-dns 192.168.76.109: /opt/dns kexe rebuilt & deployed; stale spinlock+double-lookup caused 100% CPU/REFUSED
